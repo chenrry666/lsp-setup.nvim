@@ -1,44 +1,38 @@
 local M = {}
 
 --- @class LspSetup.Options
-M.opts = {
-    capabilities = vim.lsp.protocol.make_client_capabilities(),
-    --- @diagnostic disable-next-line: unused-local
-    on_attach = function(client, bufnr) end,
-    --- @type table<string, table|function>
-    servers = {},
-}
+--- @field capabilities lsp.ClientCapabilities|nil client capabilities
+--- @field on_attach vim.lsp.client.on_attach_cb|nil deprecated, in favor of LspAttach autocmd
+--- @field servers table<string, table|function> config list
 
 --- @param user_opts LspSetup.Options
 function M.setup(user_opts)
-    if vim.fn.has('nvim-0.8') ~= 1 then
-        vim.notify_once('LSP setup requires Neovim 0.8.0+', vim.log.levels.ERROR)
+    if vim.fn.has('nvim-0.9') ~= 1 then
+        vim.notify_once('LSP setup requires Neovim 0.9+', vim.log.levels.ERROR)
         return
     end
-    -- Do we have mason?
-    local ok1, mason = pcall(require, 'mason')
-    local ok2, mason_lspconfig = pcall(require, 'mason-lspconfig')
+
+    if user_opts.on_attach then
+        vim.deprecate("on_attach", "LspAttach autocmd", "next", "lsp-setup", true)
+    end
+
+    local lspconfig = require 'lspconfig'
+    if not user_opts.capabilities then
+        lspconfig.util.default_config.capabilities = vim.lsp.protocol.make_client_capabilities()
+    else
+        lspconfig.util.default_config.capabilities = user_opts.capabilities
+    end
 
     local servers = {}
     local ensure_install = {}
 
-    if ok1 and ok2 and not mason.has_setup then
-        mason.setup {}
-        mason_lspconfig.setup {}
-    end
-
-    M.opts = vim.tbl_deep_extend('force', M.opts, user_opts)
-
-    for server_name, config in pairs(M.opts.servers) do
+    for server_name, config in pairs(user_opts.servers) do
         if type(config) == 'function' then
             config = config()
         end
 
-        if type(config) == 'table' then
-            config = vim.tbl_deep_extend('keep', config, {
-                on_attach = M.opts.on_attach,
-                capabilities = M.opts.capabilities,
-            })
+        if config.on_attach then
+            vim.deprecate(server_name .. "on_attach", "LspAttach autocmd", "next", "lsp-setup", true)
         end
 
         -- local is_installed = vim.fn.executable(
@@ -50,22 +44,23 @@ function M.setup(user_opts)
         --     table.insert(ensure_install, server_name)
         -- end
 
-        require('lspconfig')[server_name].setup(config)
+        lspconfig[server_name].setup(config)
     end
 
-    -- mason_lspconfig.setup {
-    --     ensure_installed = ensure_install
-    -- }
+    local ok1, mason = pcall(require, 'mason')
+    local ok2, mason_lspconfig = pcall(require, 'mason-lspconfig')
+
+    if ok1 and ok2 and not mason.has_setup then
+        mason.setup {}
+        mason_lspconfig.setup {}
+    end
+
     mason_lspconfig.setup_handlers({
         function(server_name)
             local config = servers[server_name] or nil
             -- only setup the servers that we don't manually setup
             if config == nil then
-                config = {
-                    on_attach = M.opts.on_attach,
-                    capabilities = M.opts.capabilities
-                }
-                require('lspconfig')[server_name].setup(config)
+                lspconfig[server_name].setup {}
             end
         end,
     })
